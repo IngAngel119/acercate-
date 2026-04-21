@@ -8,6 +8,8 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class WeeklyReflectionController extends Controller
 {
@@ -37,7 +39,7 @@ class WeeklyReflectionController extends Controller
                 'week_end_date' => $weekEnd->toDateString(),
             ],
             [
-                'content' => $this->buildReflectionContent($entries, $weekStart, $weekEnd),
+                'content' => $this->buildReflectionContentWithAi($entries, $weekStart, $weekEnd),
                 'image' => $validated['image'] ?? null,
                 'reflection_date' => $weekEnd->toDateString(),
                 'is_generated' => true,
@@ -89,6 +91,79 @@ class WeeklyReflectionController extends Controller
             ->whereBetween('entry_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
             ->orderBy('entry_date')
             ->get();
+    }
+
+    private function buildReflectionContentWithAi(Collection $entries, Carbon $weekStart, Carbon $weekEnd): string
+    {
+        $apiKey = config('services.openai.api_key');
+
+        if (! is_string($apiKey) || trim($apiKey) === '') {
+            return $this->buildReflectionContent($entries, $weekStart, $weekEnd);
+        }
+
+        $model = config('services.openai.model', 'gpt-4.1-mini');
+        $entryLines = $entries
+            ->map(fn (JournalEntry $entry): string => sprintf('- [%s] %s', Carbon::parse($entry->entry_date)->toDateString(), trim($entry->content)))
+            ->implode("\n");
+
+        $systemPrompt = <<<'PROMPT'
+Eres un coach emocional y escribes reflexiones semanales personalizadas basadas en entradas de diario.
+
+Reglas:
+- Escribe entre 130 y 220 palabras.
+- Tono cálido, empático y concreto.
+- Usa exactamente estas 4 secciones en este orden y con estos títulos:
+1) Resumen de la semana
+2) Patrones observados
+3) Fortalezas y aprendizajes
+4) Intención para la próxima semana
+- No inventes hechos que no estén en las entradas.
+- Si faltan detalles, dilo con suavidad sin suponer.
+- Devuelve solo texto plano en español.
+PROMPT;
+
+        $userPrompt = sprintf(
+            "Semana: %s a %s\n\nEntradas del usuario:\n%s",
+            $weekStart->toDateString(),
+            $weekEnd->toDateString(),
+            $entryLines
+        );
+
+        try {
+            $response = Http::withToken($apiKey)
+                ->timeout(25)
+                ->post('https://api.openai.com/v1/chat/completions', [
+                    'model' => $model,
+                    'temperature' => 0.7,
+                    'messages' => [
+                        ['role' => 'system', 'content' => $systemPrompt],
+                        ['role' => 'user', 'content' => $userPrompt],
+                    ],
+                ]);
+
+            if (! $response->successful()) {
+                Log::warning('OpenAI reflection generation failed', [
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return $this->buildReflectionContent($entries, $weekStart, $weekEnd);
+            }
+
+            $content = trim((string) data_get($response->json(), 'choices.0.message.content', ''));
+
+            if ($content === '') {
+                return $this->buildReflectionContent($entries, $weekStart, $weekEnd);
+            }
+
+            return $content;
+        } catch (\Throwable $exception) {
+            Log::warning('OpenAI reflection generation exception', [
+                'message' => $exception->getMessage(),
+            ]);
+
+            return $this->buildReflectionContent($entries, $weekStart, $weekEnd);
+        }
     }
 
     private function buildReflectionContent(Collection $entries, Carbon $weekStart, Carbon $weekEnd): string

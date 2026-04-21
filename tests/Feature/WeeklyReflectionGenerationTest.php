@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\JournalEntry;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -15,6 +16,20 @@ class WeeklyReflectionGenerationTest extends TestCase
     public function test_authenticated_user_can_generate_weekly_reflection_from_entries(): void
     {
         $user = User::factory()->create();
+
+        config()->set('services.openai.api_key', 'test-openai-key');
+
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => "1) Resumen de la semana\nTuviste una semana con altibajos y buena capacidad de recuperación.\n\n2) Patrones observados\nAparecen temas de familia, trabajo y rutina.\n\n3) Fortalezas y aprendizajes\nMostraste calma y esperanza incluso en días retadores.\n\n4) Intención para la próxima semana\nSostener hábitos que te ayudaron a cerrar mejor los días.",
+                        ],
+                    ],
+                ],
+            ], 200),
+        ]);
 
         JournalEntry::query()->create([
             'user_id' => $user->id,
@@ -39,7 +54,8 @@ class WeeklyReflectionGenerationTest extends TestCase
             ->assertJsonPath('user_id', $user->id)
             ->assertJsonPath('is_generated', true)
             ->assertJsonPath('week_start_date', '2026-04-13')
-            ->assertJsonPath('week_end_date', '2026-04-19');
+            ->assertJsonPath('week_end_date', '2026-04-19')
+            ->assertJsonPath('content', "1) Resumen de la semana\nTuviste una semana con altibajos y buena capacidad de recuperación.\n\n2) Patrones observados\nAparecen temas de familia, trabajo y rutina.\n\n3) Fortalezas y aprendizajes\nMostraste calma y esperanza incluso en días retadores.\n\n4) Intención para la próxima semana\nSostener hábitos que te ayudaron a cerrar mejor los días.");
 
         $this->assertDatabaseHas('reflections', [
             'user_id' => $user->id,
