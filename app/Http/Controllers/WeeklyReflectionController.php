@@ -32,21 +32,39 @@ class WeeklyReflectionController extends Controller
             ], 422);
         }
 
-        $reflection = Reflection::query()->updateOrCreate(
-            [
-                'user_id' => $request->user()->id,
-                'week_start_date' => $weekStart->toDateString(),
-                'week_end_date' => $weekEnd->toDateString(),
-            ],
-            [
-                'content' => $this->buildReflectionContentWithAi($entries, $weekStart, $weekEnd),
+        // Check if a reflection already exists for this week
+        $existingReflection = Reflection::query()
+            ->where('user_id', $request->user()->id)
+            ->where('week_start_date', $weekStart->toDateString())
+            ->where('week_end_date', $weekEnd->toDateString())
+            ->first();
+
+        $content = $this->buildReflectionContentWithAi($entries, $weekStart, $weekEnd);
+
+        // Only update if it was created today, otherwise create a new one
+        if ($existingReflection && $existingReflection->created_at->toDateString() === today()->toDateString()) {
+            $existingReflection->update([
+                'content' => $content,
                 'image' => $validated['image'] ?? null,
                 'reflection_date' => $weekEnd->toDateString(),
                 'is_generated' => true,
-            ]
-        );
+            ]);
+            $reflection = $existingReflection;
+            $statusCode = 200;
+        } else {
+            $reflection = Reflection::create([
+                'user_id' => $request->user()->id,
+                'week_start_date' => $weekStart->toDateString(),
+                'week_end_date' => $weekEnd->toDateString(),
+                'content' => $content,
+                'image' => $validated['image'] ?? null,
+                'reflection_date' => $weekEnd->toDateString(),
+                'is_generated' => true,
+            ]);
+            $statusCode = 201;
+        }
 
-        return response()->json($reflection, $reflection->wasRecentlyCreated ? 201 : 200);
+        return response()->json($reflection, $statusCode);
     }
 
     // ─── GET /api/reflections/weekly/current ─────────────────────────────────
