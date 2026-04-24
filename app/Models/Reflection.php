@@ -7,10 +7,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['user_id', 'content', 'image', 'reflection_date', 'week_start_date', 'week_end_date', 'is_generated'])]
 class Reflection extends Model
 {
     use HasFactory;
+
+    protected $fillable = ['user_id', 'content', 'image', 'reflection_date', 'week_start_date', 'week_end_date', 'is_generated'];
 
     protected function casts(): array
     {
